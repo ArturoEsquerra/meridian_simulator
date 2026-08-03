@@ -21,15 +21,21 @@ avoid loading TensorFlow at import time of the config submodule.
 
 from meridian_simulator.config import (
     BaselineConfig,
+    CollinearVariableConfig,
     ContextVariableConfig,
+    EndogenousVariableConfig,
     MediaChannelConfig,
     NonMediaChannelConfig,
     OrganicMediaChannelConfig,
     OrganicRFChannelConfig,
+    PromoEventConfig,
     RFChannelConfig,
     SeasonalityComponent,
     SimulationConfig,
 )
+
+
+__version__ = "2.1.0"
 
 
 def __getattr__(name):
@@ -52,6 +58,9 @@ __all__ = [
     "OrganicRFChannelConfig",
     "NonMediaChannelConfig",
     "ContextVariableConfig",
+    "CollinearVariableConfig",
+    "EndogenousVariableConfig",
+    "PromoEventConfig",
     "BaselineConfig",
     "SeasonalityComponent",
 ]

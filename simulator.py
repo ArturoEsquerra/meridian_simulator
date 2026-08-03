@@ -18,6 +18,12 @@ import pandas as pd
 import tensorflow as tf
 import tensorflow_probability as tfp
 
+from meridian_simulator.augment import (
+    apply_kpi_noise,
+    apply_promo_events,
+    simulate_collinear_variables,
+    simulate_endogenous_variables,
+)
 from meridian_simulator.baseline import simulate_baseline
 from meridian_simulator.config import SimulationConfig
 from meridian_simulator.context import (
@@ -66,6 +72,9 @@ class SimulationResult:
         organic_rf_channel_names: List of organic R&F channel labels.
         non_media_channel_names: List of non-media channel labels.
         context_variable_names: List of context variable labels.
+        collinear_variable_names: List of collinear distractor variable labels.
+        endogenous_variable_names: List of endogenous distractor variable labels.
+        promo_event_names: List of promo event labels.
     """
 
     config: SimulationConfig
@@ -84,6 +93,9 @@ class SimulationResult:
     organic_rf_channel_names: list[str]
     non_media_channel_names: list[str]
     context_variable_names: list[str]
+    collinear_variable_names: list[str] = dataclasses.field(default_factory=list)
+    endogenous_variable_names: list[str] = dataclasses.field(default_factory=list)
+    promo_event_names: list[str] = dataclasses.field(default_factory=list)
 
     def save(self, output_dir: str | Path = ".") -> None:
         """Save DataFrames to CSV and ground_truth dict to pickle.
@@ -121,6 +133,10 @@ class SimulationResult:
             f"  Organic R&F ch.    : {cfg.n_organic_rf_channels}",
             f"  Non-media channels : {cfg.n_non_media_channels}",
             f"  Context variables  : {cfg.n_context_variables}",
+            f"  Collinear vars     : {cfg.n_collinear_variables}",
+            f"  Endogenous vars    : {cfg.n_endogenous_variables}",
+            f"  Promo events       : {cfg.n_promo_events}",
+            f"  KPI noise (CV)     : {cfg.kpi_noise_pct:.3f}",
             "",
             "Ground-truth ROI (impression channels):",
         ]
@@ -332,6 +348,7 @@ class MeridianSimulator:
             unit_value_gt,
             cfg.n_times,
             prior,
+            seasonality_t=base["seasonality_t"],
         )
 
         # ---- Organic media --------------------------------------------------
@@ -367,6 +384,11 @@ class MeridianSimulator:
                 non_media["gamma_gn"],
             )
 
+        # Snapshot the non-media-driven KPI portion (baseline + context +
+        # non-media) BEFORE media contributions are added.  Used by promo
+        # events configured with baseline_only=True.
+        kpi_per_cap_non_media = kpi_per_cap
+
         n_total_paid = cfg.n_media_channels + cfg.n_rf_channels
         if n_total_paid > 0:
             beta_all = tf.concat(
@@ -392,6 +414,42 @@ class MeridianSimulator:
             )
 
         kpi_gt = kpi_per_cap * population_g[:, tf.newaxis]
+
+        # ---- Promo events (structural KPI lifts) -----------------------------
+        baseline_kpi_gt = to_numpy(
+            kpi_per_cap_non_media * population_g[:, tf.newaxis]
+        )
+        promo = apply_promo_events(
+            cfg.promo_events, to_numpy(kpi_gt), rng,
+            baseline_kpi_gt=baseline_kpi_gt,
+        )
+
+        # ---- KPI observation noise -------------------------------------------
+        noise = apply_kpi_noise(promo["kpi_gt"], cfg.kpi_noise_pct, rng)
+        kpi_gt = tf.constant(noise["kpi_gt"], dtype=tf.float32)
+
+        # ---- Endogenous distractor variables ---------------------------------
+        endog = simulate_endogenous_variables(
+            cfg.endogenous_variables,
+            to_numpy(media["cost_gtm"]),
+            channel_names + rf_channel_names,
+            noise["kpi_gt"],
+            rng,
+        )
+
+        # ---- Collinear distractor variables -----------------------------------
+        collinear = simulate_collinear_variables(
+            cfg.collinear_variables,
+            to_numpy(ctx["context_gtc"]),
+            context_variable_names,
+            to_numpy(population_g),
+            cfg.n_times,
+            rng,
+        )
+
+        collinear_variable_names = [c.name for c in cfg.collinear_variables]
+        endogenous_variable_names = [c.name for c in cfg.endogenous_variables]
+        promo_event_names = [c.name for c in cfg.promo_events]
 
         # ---- Ground-truth dict ----------------------------------------------
         # Scale parameters to match Meridian's transformed KPI scale
@@ -454,6 +512,19 @@ class MeridianSimulator:
             # Spend (raw tensors for diagnostics)
             "cost_gtm": to_numpy(media["cost_gtm"]),
             "total_spend": float(tf.reduce_sum(media["cost_gtm"]).numpy()),
+            # Promo events (structural lifts)
+            "promo_events": promo["spec"],
+            "promo_multiplier_gt": promo["multiplier_gt"],
+            "promo_baseline_multiplier_gt": promo["baseline_multiplier_gt"],
+            "promo_flags_tc": promo["flags_tc"],
+            "baseline_kpi_gt": baseline_kpi_gt,
+            # KPI observation noise
+            "kpi_noise_pct": cfg.kpi_noise_pct,
+            "kpi_noise_multiplier_gt": noise["multiplier_gt"],
+            "kpi_noise_realized_cv": noise["realized_cv"],
+            # Distractor variables (zero causal effect on KPI)
+            "collinear_variables": collinear["spec"],
+            "endogenous_variables": endog["spec"],
         }
 
         # ---- Build output DataFrames / xarrays ------------------------------
@@ -484,6 +555,31 @@ class MeridianSimulator:
         )
 
         geo_df = build_geo_dataframe(xr_dict)
+
+        # ---- Append distractor variables and promo flags to geo_df -----------
+        # Build an aligned (geo, time)-keyed frame and merge, so we never rely
+        # on geo_df's row order.
+        extra_cols: dict[str, np.ndarray] = {}
+        for j, name in enumerate(collinear_variable_names):
+            extra_cols[name] = collinear["collinear_gtc"][:, :, j]
+        for j, name in enumerate(endogenous_variable_names):
+            extra_cols[name] = endog["endogenous_gtc"][:, :, j]
+
+        if extra_cols or any(
+            p.include_flag_in_output for p in cfg.promo_events
+        ):
+            key = pd.MultiIndex.from_product(
+                [geo_names, time_names], names=["geo", "time"]
+            )
+            extra_df = pd.DataFrame(index=key).reset_index()
+            for name, arr in extra_cols.items():
+                extra_df[name] = np.asarray(arr).reshape(-1)
+            for j, p in enumerate(cfg.promo_events):
+                if p.include_flag_in_output:
+                    flag_t = promo["flags_tc"][:, j]  # (n_times,)
+                    extra_df[p.name] = np.tile(flag_t, len(geo_names))
+            geo_df = geo_df.merge(extra_df, on=["geo", "time"], how="left")
+
         national_df = build_national_dataframe(geo_df)
 
         return SimulationResult(
@@ -503,4 +599,7 @@ class MeridianSimulator:
             organic_rf_channel_names=organic_rf_channel_names,
             non_media_channel_names=non_media_channel_names,
             context_variable_names=context_variable_names,
+            collinear_variable_names=collinear_variable_names,
+            endogenous_variable_names=endogenous_variable_names,
+            promo_event_names=promo_event_names,
         )

@@ -133,8 +133,16 @@ def simulate_impressions(
     n_geos: int,
     n_times: int,
     p_g: tf.Tensor,  # (n_geos,)
+    seasonality_t: Optional[tf.Tensor] = None,  # (n_times,), optional
 ) -> dict:
     """Simulate raw impressions for all channels (paid or organic).
+
+    Args:
+        seasonality_t: Optional baseline seasonality wave, shape (n_times,).
+            Channels with ``seasonal_flighting > 0`` have their weekly
+            activity mean modulated by this wave (normalized to unit peak),
+            simulating demand-synchronized media buying.  ``None`` or a
+            zero flighting value reproduces the historical iid behavior.
 
     Returns dict with:
       ``ipc_gtm``       – impressions per capita  (n_geos, n_times, n_ch)
@@ -157,13 +165,26 @@ def simulate_impressions(
 
     u_m = tf.constant(u_m_vals, dtype=tf.float32)   # (n_ch,)
 
+    # Normalized seasonality wave for demand-synchronized flighting
+    s_norm = None
+    if seasonality_t is not None:
+        s = tf.cast(seasonality_t, tf.float32)
+        peak = tf.reduce_max(tf.abs(s))
+        if float(peak.numpy()) > 0:
+            s_norm = s / peak  # (n_times,) in [-1, 1]
+
     # Time random effects — shape (n_times, n_ch)
     u_tm_parts = []
     for i, c in enumerate(channel_cfgs):
-        u_tm_parts.append(
-            tfp.distributions.Normal(c.impression_mean_time, c.impression_std)
-            .sample([n_times])
-        )
+        u_tm_i = tfp.distributions.Normal(
+            c.impression_mean_time, c.impression_std
+        ).sample([n_times])
+        flight = getattr(c, "seasonal_flighting", 0.0)
+        if s_norm is not None and flight > 0.0:
+            # Modulate the weekly activity mean with the demand wave:
+            # planners buy INTO high season (media-seasonality confounding).
+            u_tm_i = u_tm_i + c.impression_mean_time * flight * s_norm
+        u_tm_parts.append(u_tm_i)
     u_tm = tf.stack(u_tm_parts, axis=-1)  # (n_times, n_ch)
 
     # Geo-time random effects — shape (n_geos, n_times, n_ch)
@@ -241,6 +262,7 @@ def simulate_paid_media(
     unit_value: tf.Tensor,
     n_times: int,
     prior,  # PriorDistribution broadcast object
+    seasonality_t: Optional[tf.Tensor] = None,  # (n_times,), optional
 ) -> dict:
     """Simulate all paid media channels end-to-end.
 
@@ -255,12 +277,16 @@ def simulate_paid_media(
     n_rf = len(rf_cfgs)
 
     # ---- Impression-based channels ----------------------------------------
-    imp_sim = simulate_impressions(media_cfgs, n_geos, n_times, p_g)
+    imp_sim = simulate_impressions(
+        media_cfgs, n_geos, n_times, p_g, seasonality_t=seasonality_t
+    )
     imp_gtm = imp_sim["impression_gtm"]       # (n_geos, n_times, n_m)
     ipc_gtm = imp_sim["ipc_gtm"]
 
     # ---- RF channels ----------------------------------------------------------
-    rf_sim = simulate_impressions(rf_cfgs, n_geos, n_times, p_g)
+    rf_sim = simulate_impressions(
+        rf_cfgs, n_geos, n_times, p_g, seasonality_t=seasonality_t
+    )
     rf_imp_gtm = rf_sim["impression_gtm"]     # (n_geos, n_times, n_rf)
     rf_ipc_gtm = rf_sim["ipc_gtm"]
 
@@ -297,11 +323,17 @@ def simulate_paid_media(
         # Fall back to prior for channels where only some params are set
         if any(c.alpha is None for c in media_cfgs):
             alpha_m_sampled = prior.alpha_m.sample()
-            alpha_m = tf.tensor_scatter_nd_update(
-                alpha_m_sampled,
-                [[i] for i, c in enumerate(media_cfgs) if c.alpha is not None],
-                [c.alpha for c in media_cfgs if c.alpha is not None],
-            ) if n_m > 0 else alpha_m_sampled
+            fixed_idx = [
+                [i] for i, c in enumerate(media_cfgs) if c.alpha is not None
+            ]
+            if fixed_idx:
+                alpha_m = tf.tensor_scatter_nd_update(
+                    alpha_m_sampled,
+                    fixed_idx,
+                    [c.alpha for c in media_cfgs if c.alpha is not None],
+                )
+            else:
+                alpha_m = alpha_m_sampled
 
         max_lag_m = max((c.max_lag for c in media_cfgs), default=8)
         media_transformed = _apply_adstock_hill(

@@ -40,6 +40,13 @@ class MediaChannelConfig:
         impression_mean_channel: Mean channel effect used to draw impressions.
         impression_mean_time: Mean time effect used to draw impressions.
         impression_std: Std of the geo-time idiosyncratic impression noise.
+        seasonal_flighting: Strength in [0, 1] of demand-synchronized media
+            flighting.  0.0 (default) draws media activity independently of
+            the baseline seasonality — the historical behavior.  Positive
+            values modulate the channel's weekly activity with the baseline
+            seasonal wave (media planners buying INTO high season), creating
+            realistic media–seasonality confounding that tests whether an
+            analyst's knot/control choices can separate media from demand.
     """
 
     name: str = "channel"
@@ -55,6 +62,7 @@ class MediaChannelConfig:
     impression_mean_channel: float = 1.0
     impression_mean_time: float = 0.8
     impression_std: float = 0.5
+    seasonal_flighting: float = 0.0
 
 
 @dataclasses.dataclass
@@ -92,6 +100,7 @@ class RFChannelConfig:
     impression_mean_channel: float = 1.0
     impression_mean_time: float = 0.8
     impression_std: float = 0.5
+    seasonal_flighting: float = 0.0
 
 
 @dataclasses.dataclass
@@ -194,6 +203,125 @@ class ContextVariableConfig:
     trend: float = 0.0
 
 
+@dataclasses.dataclass
+class CollinearVariableConfig:
+    """Configuration for a collinear distractor variable.
+
+    Collinear variables are derived from an existing series (population or a
+    context variable) via a linear map plus noise::
+
+        value = coefficient * source + intercept + N(0, noise_std)
+
+    They appear in the output dataset but have ZERO causal effect on the KPI —
+    their purpose is to test whether an analyst detects and handles
+    multicollinearity (e.g. via VIF) instead of throwing every column into the
+    model.
+
+    Attributes:
+        name: Output column label (e.g. ``"store_count"``).
+        source: What the variable is collinear with.  Either the literal
+            string ``"population"`` or the ``name`` of a configured
+            ``ContextVariableConfig``.
+        coefficient: Linear multiplier applied to the source series.
+        intercept: Constant offset added after the multiplication.
+        noise_std: Std of the additive Gaussian noise.  Relative to the scale
+            of ``coefficient * source``; small values give near-perfect
+            collinearity (VIF → ∞), larger values weaken it.
+        round_decimals: If not None, round the final series to this many
+            decimals (use 0 for integer-like variables such as store counts).
+    """
+
+    name: str = "collinear_var"
+    source: str = "population"
+    coefficient: float = 1.0
+    intercept: float = 0.0
+    noise_std: float = 1.0
+    round_decimals: Optional[int] = None
+
+
+@dataclasses.dataclass
+class EndogenousVariableConfig:
+    """Configuration for an endogenous distractor variable.
+
+    Endogenous variables are *symptoms* of the system, not causes: they are
+    driven by a lagged media channel's activity (e.g. Google query volume
+    rising after YouTube bursts) or by the KPI itself (reverse causality).
+    Including them as controls in an MMM soaks up media credit and biases ROI
+    downward — the classic mediator/endogeneity trap.
+
+    The series is built as::
+
+        z = weight * normalize(lagged driver) + (1 - weight) * N(0, 1)
+        value = base + scale * z
+
+    They have ZERO direct causal effect on the KPI.
+
+    Attributes:
+        name: Output column label (e.g. ``"gqv_index"``).
+        driver: Name of the paid media / R&F channel whose SPEND drives the
+            series, or the literal string ``"kpi"`` for reverse causality.
+        lag: Number of time periods the driver is lagged by (>= 0).
+        weight: Share of variance explained by the driver, in [0, 1].
+            0.65 gives a clearly detectable but not degenerate correlation.
+        base: Additive level of the output series.
+        scale: Multiplier applied to the standardized mixed series.
+    """
+
+    name: str = "endogenous_var"
+    driver: str = "kpi"
+    lag: int = 1
+    weight: float = 0.65
+    base: float = 50.0
+    scale: float = 10.0
+
+
+@dataclasses.dataclass
+class PromoEventConfig:
+    """Configuration for a promotional event that structurally lifts the KPI.
+
+    Promo events model commercial actions (deep discounts, special payment
+    terms, in-store events) that lift sales independently of media — the
+    textbook use case for Meridian's ``non_media_treatments``.  The lift is
+    applied MULTIPLICATIVELY to the final KPI on the configured weeks::
+
+        kpi[:, week] *= (1 + lift_pct + N(0, lift_geo_std))   per geo
+
+    Attributes:
+        name: Event label (e.g. ``"hot_sale_2024"``).  When
+            ``include_flag_in_output`` is True, a binary ``{name}`` column is
+            added to the output DataFrames.
+        weeks: Time-period indices (0-based) on which the event is active.
+        lift_pct: Fractional KPI lift on event weeks (0.25 = +25%).
+        lift_geo_std: Std of geo-level jitter added to the lift, so regions
+            respond heterogeneously.  0.0 applies a uniform lift.
+        include_flag_in_output: Whether to include the binary event flag as a
+            column in the output DataFrames.  Set False to force analysts to
+            engineer the flags from domain knowledge.
+        baseline_only: Controls what the multiplicative lift applies to.
+            False (default): the lift scales the TOTAL KPI on event weeks —
+            media contributions are lifted too, so true channel ROI on those
+            weeks runs slightly above the recorded ``roi_m`` (media works
+            harder during promos; realistic synergy).
+            True: the lift scales only the non-media-driven (baseline +
+            context + non-media) portion of the KPI.  Media contributions are
+            untouched, so the recorded ground-truth ROIs remain exactly true.
+        allow_negative_lift: Permit ``lift_pct < 0`` to model NEGATIVE
+            structural shocks — stockouts, supply disruptions, store
+            closures, demand collapses.  When True, per-geo realized lifts
+            are floored at -0.95 (KPI can drop up to 95% but never below 0).
+            When False (default, historical behavior) negative realized
+            lifts are clamped to 0.
+    """
+
+    name: str = "promo_event"
+    weeks: list[int] = dataclasses.field(default_factory=list)
+    lift_pct: float = 0.25
+    lift_geo_std: float = 0.0
+    include_flag_in_output: bool = True
+    baseline_only: bool = False
+    allow_negative_lift: bool = False
+
+
 # ---------------------------------------------------------------------------
 # Baseline / time-series structure
 # ---------------------------------------------------------------------------
@@ -270,6 +398,19 @@ class SimulationConfig:
         organic_rf_channels: List of organic RF channel configs.
         non_media_channels: List of non-media channel configs.
         context_variables: List of context/control variable configs.
+        collinear_variables: List of collinear distractor variable configs.
+            These appear in the output data but have no causal effect on KPI.
+        endogenous_variables: List of endogenous distractor variable configs.
+            Driven by lagged media activity or the KPI itself; no causal
+            effect on KPI.
+        promo_events: List of promotional event configs.  Each applies a
+            multiplicative structural lift to the KPI on its event weeks.
+        kpi_noise_pct: Coefficient of variation of multiplicative observation
+            noise applied to the FINAL KPI: ``kpi *= (1 + N(0, kpi_noise_pct))``.
+            0.0 disables it.  This is the main knob for how noisy sales data
+            are relative to signal; ``baseline.noise_std`` remains available
+            as additive per-capita noise inside the baseline.  Typical values:
+            0.01 (very clean) to 0.10 (noisy real-world data).
         baseline: Baseline (intercept + trend + seasonality) config.
     """
 
@@ -295,6 +436,16 @@ class SimulationConfig:
     context_variables: list[ContextVariableConfig] = dataclasses.field(
         default_factory=list
     )
+    collinear_variables: list[CollinearVariableConfig] = dataclasses.field(
+        default_factory=list
+    )
+    endogenous_variables: list[EndogenousVariableConfig] = dataclasses.field(
+        default_factory=list
+    )
+    promo_events: list[PromoEventConfig] = dataclasses.field(
+        default_factory=list
+    )
+    kpi_noise_pct: float = 0.0
     baseline: BaselineConfig = dataclasses.field(
         default_factory=BaselineConfig
     )
@@ -304,6 +455,55 @@ class SimulationConfig:
             raise ValueError("n_geos must be >= 1.")
         if self.n_times < 2:
             raise ValueError("n_times must be >= 2.")
+        if self.kpi_noise_pct < 0:
+            raise ValueError("kpi_noise_pct must be >= 0.")
+
+        valid_ctx = {c.name for c in self.context_variables}
+        for cv in self.collinear_variables:
+            if cv.source != "population" and cv.source not in valid_ctx:
+                raise ValueError(
+                    f"CollinearVariableConfig '{cv.name}' has source "
+                    f"'{cv.source}', which is neither 'population' nor a "
+                    f"configured context variable name ({sorted(valid_ctx)})."
+                )
+
+        valid_drivers = (
+            {c.name for c in self.media_channels}
+            | {c.name for c in self.rf_channels}
+            | {"kpi"}
+        )
+        for ev in self.endogenous_variables:
+            if ev.driver not in valid_drivers:
+                raise ValueError(
+                    f"EndogenousVariableConfig '{ev.name}' has driver "
+                    f"'{ev.driver}', which is neither 'kpi' nor a configured "
+                    f"paid channel name ({sorted(valid_drivers - {'kpi'})})."
+                )
+            if ev.lag < 0:
+                raise ValueError(f"EndogenousVariableConfig '{ev.name}': lag must be >= 0.")
+            if not 0.0 <= ev.weight <= 1.0:
+                raise ValueError(f"EndogenousVariableConfig '{ev.name}': weight must be in [0, 1].")
+
+        for pe in self.promo_events:
+            bad = [w for w in pe.weeks if not 0 <= w < self.n_times]
+            if bad:
+                raise ValueError(
+                    f"PromoEventConfig '{pe.name}' has week indices {bad} "
+                    f"outside [0, {self.n_times - 1}]."
+                )
+            if pe.lift_pct < 0 and not pe.allow_negative_lift:
+                raise ValueError(
+                    f"PromoEventConfig '{pe.name}' has lift_pct={pe.lift_pct} "
+                    f"< 0. Set allow_negative_lift=True to model negative "
+                    f"structural shocks (stockouts, disruptions)."
+                )
+
+        for mc in list(self.media_channels) + list(self.rf_channels):
+            if not 0.0 <= mc.seasonal_flighting <= 1.0:
+                raise ValueError(
+                    f"Channel '{mc.name}': seasonal_flighting must be in "
+                    f"[0, 1], got {mc.seasonal_flighting}."
+                )
 
     @property
     def is_national(self) -> bool:
@@ -332,6 +532,18 @@ class SimulationConfig:
     @property
     def n_context_variables(self) -> int:
         return len(self.context_variables)
+
+    @property
+    def n_collinear_variables(self) -> int:
+        return len(self.collinear_variables)
+
+    @property
+    def n_endogenous_variables(self) -> int:
+        return len(self.endogenous_variables)
+
+    @property
+    def n_promo_events(self) -> int:
+        return len(self.promo_events)
 
     @property
     def n_total_paid_channels(self) -> int:
