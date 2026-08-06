@@ -24,6 +24,7 @@ from meridian_simulator.config import (
     CollinearVariableConfig,
     ContextVariableConfig,
     EndogenousVariableConfig,
+    ExperimentConfig,
     MediaChannelConfig,
     NonMediaChannelConfig,
     OrganicMediaChannelConfig,
@@ -35,7 +36,7 @@ from meridian_simulator.config import (
 )
 
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 
 def __getattr__(name):
@@ -60,6 +61,7 @@ __all__ = [
     "ContextVariableConfig",
     "CollinearVariableConfig",
     "EndogenousVariableConfig",
+    "ExperimentConfig",
     "PromoEventConfig",
     "BaselineConfig",
     "SeasonalityComponent",

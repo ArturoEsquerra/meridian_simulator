@@ -151,3 +151,7 @@ pytest tests/          # 34 tests: shapes, ground truth, ROI back-solve, all rea
 ## License & citation
 
 Internal analytical tooling. If this simulator informs published MMM research, cite Google's Meridian alongside it — the data-generating process deliberately mirrors Meridian's model family (adstock → Hill, hierarchical geo coefficients, knot-based baselines).
+
+## API Reference
+
+- [API Reference](docs/api-reference.md) — every class, field, and function, Meridian-style

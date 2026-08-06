@@ -25,6 +25,7 @@ from meridian_simulator.augment import (
     simulate_endogenous_variables,
 )
 from meridian_simulator.baseline import simulate_baseline
+from meridian_simulator.experiments import simulate_experiments
 from meridian_simulator.config import SimulationConfig
 from meridian_simulator.context import (
     simulate_context_variables,
@@ -447,6 +448,31 @@ class MeridianSimulator:
             rng,
         )
 
+        # ---- Incrementality experiments --------------------------------------
+        # True per-(geo, time, channel) media contribution in KPI units,
+        # computed on the pre-event KPI scale so experiment truths are
+        # consistent with the recorded roi_m ground truth.
+        if cfg.experiments:
+            beta_all_np = to_numpy(
+                tf.concat([media["beta_gm"], media["beta_grf"]], axis=-1)
+            )  # (n_geos, n_paid)
+            contribution_gtm = (
+                to_numpy(media["all_media_transformed"])
+                * beta_all_np[:, np.newaxis, :]
+                * to_numpy(population_g)[:, np.newaxis, np.newaxis]
+            )  # (n_geos, n_times, n_paid) in KPI units
+            exp_sim = simulate_experiments(
+                cfg.experiments,
+                contribution_gtm,
+                to_numpy(media["cost_gtm"]),
+                to_numpy(unit_value_gt),
+                channel_names + rf_channel_names,
+                cfg.n_times,
+                rng,
+            )
+        else:
+            exp_sim = {"results": [], "calibration": None}
+
         collinear_variable_names = [c.name for c in cfg.collinear_variables]
         endogenous_variable_names = [c.name for c in cfg.endogenous_variables]
         promo_event_names = [c.name for c in cfg.promo_events]
@@ -525,6 +551,9 @@ class MeridianSimulator:
             # Distractor variables (zero causal effect on KPI)
             "collinear_variables": collinear["spec"],
             "endogenous_variables": endog["spec"],
+            # Incrementality experiments (simulated lift studies)
+            "experiments": exp_sim["results"],
+            "experiment_calibration": exp_sim["calibration"],
         }
 
         # ---- Build output DataFrames / xarrays ------------------------------

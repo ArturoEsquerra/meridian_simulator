@@ -322,6 +322,46 @@ class PromoEventConfig:
     allow_negative_lift: bool = False
 
 
+@dataclasses.dataclass
+class ExperimentConfig:
+    """Configuration for a simulated incrementality experiment.
+
+    Simulates a randomized lift study (geo holdout, conversion lift) run on a
+    paid channel. The experiment measures the channel's TRUE ROI over its
+    window from the recorded ground-truth contributions, then reports a noisy
+    — and optionally biased — point estimate with a standard error, exactly
+    the two numbers a real experiment vendor delivers. Results are converted
+    to Meridian-ready LogNormal ``roi_m`` prior parameters by moment matching,
+    and windowed experiments additionally produce the
+    ``ModelSpec(roi_calibration_period=...)`` mask.
+
+    Attributes:
+        name: Experiment label (e.g. ``"youtube_geo_holdout_q3"``).
+        channel: Name of the paid channel under test. Must match a configured
+            media or R&F channel.
+        start_week: First week (0-based) of the experiment window, or None
+            for a full-duration experiment.
+        end_week: Last week (inclusive) of the window, or None for
+            full-duration. ``start_week``/``end_week`` must be set together.
+        se_pct: Relative precision of the study — the standard error as a
+            fraction of the true ROI. 0.10 is a tight, well-powered geo
+            experiment; 0.30 is a small or noisy study.
+        bias_pct: Systematic bias of the study as a fraction of true ROI.
+            0.0 = unbiased. Negative values model the common real-world case
+            of short-horizon experiments missing long-term/adstocked effects
+            (e.g. -0.20 = the study captures only 80% of true incrementality).
+            A deliberately biased experiment is a calibration TRAP: analysts
+            who calibrate hard on it pull the posterior toward the wrong ROI.
+    """
+
+    name: str = "experiment"
+    channel: str = ""
+    start_week: Optional[int] = None
+    end_week: Optional[int] = None
+    se_pct: float = 0.15
+    bias_pct: float = 0.0
+
+
 # ---------------------------------------------------------------------------
 # Baseline / time-series structure
 # ---------------------------------------------------------------------------
@@ -405,6 +445,10 @@ class SimulationConfig:
             effect on KPI.
         promo_events: List of promotional event configs.  Each applies a
             multiplicative structural lift to the KPI on its event weeks.
+        experiments: List of incrementality experiment configs.  Each
+            simulates a lift study measuring a paid channel's true window
+            ROI, reported with configurable noise/bias and converted to
+            Meridian-ready calibration priors in the ground truth.
         kpi_noise_pct: Coefficient of variation of multiplicative observation
             noise applied to the FINAL KPI: ``kpi *= (1 + N(0, kpi_noise_pct))``.
             0.0 disables it.  This is the main knob for how noisy sales data
@@ -443,6 +487,9 @@ class SimulationConfig:
         default_factory=list
     )
     promo_events: list[PromoEventConfig] = dataclasses.field(
+        default_factory=list
+    )
+    experiments: list[ExperimentConfig] = dataclasses.field(
         default_factory=list
     )
     kpi_noise_pct: float = 0.0
@@ -496,6 +543,34 @@ class SimulationConfig:
                     f"PromoEventConfig '{pe.name}' has lift_pct={pe.lift_pct} "
                     f"< 0. Set allow_negative_lift=True to model negative "
                     f"structural shocks (stockouts, disruptions)."
+                )
+
+        paid_names = {c.name for c in self.media_channels} | {
+            c.name for c in self.rf_channels
+        }
+        for ex in self.experiments:
+            if ex.channel not in paid_names:
+                raise ValueError(
+                    f"ExperimentConfig '{ex.name}' targets channel "
+                    f"'{ex.channel}', which is not a configured paid channel "
+                    f"({sorted(paid_names)})."
+                )
+            if (ex.start_week is None) != (ex.end_week is None):
+                raise ValueError(
+                    f"ExperimentConfig '{ex.name}': start_week and end_week "
+                    "must both be set (windowed) or both be None (full "
+                    "duration)."
+                )
+            if ex.start_week is not None:
+                if not 0 <= ex.start_week <= ex.end_week < self.n_times:
+                    raise ValueError(
+                        f"ExperimentConfig '{ex.name}': window "
+                        f"[{ex.start_week}, {ex.end_week}] invalid for "
+                        f"n_times={self.n_times}."
+                    )
+            if ex.se_pct <= 0:
+                raise ValueError(
+                    f"ExperimentConfig '{ex.name}': se_pct must be > 0."
                 )
 
         for mc in list(self.media_channels) + list(self.rf_channels):

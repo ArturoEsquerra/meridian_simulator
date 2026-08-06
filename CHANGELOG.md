@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.2.0 — 2026-08-05
+
+### Added
+- **Incrementality experiments** (`ExperimentConfig` + `experiments.py`): simulate randomized lift studies against the ground truth. Each experiment measures a paid channel's TRUE ROI over its window (full duration or `start_week`/`end_week`), then reports a noisy point estimate + standard error controlled by `se_pct`, with optional systematic `bias_pct` (e.g. short-horizon studies missing adstocked effects — a calibration trap).
+- **Meridian-ready calibration priors**: experiment results are moment-matched to LogNormal `roi_m` prior parameters (`lognormal_from_point_and_se`), and `ground_truth["experiment_calibration"]` packages per-channel `roi_mu`/`roi_sigma` (defaults preserved for uncalibrated channels), a `calibrated` flag vector, and — for windowed experiments — the `ModelSpec(roi_calibration_period=...)` boolean mask. Multiple experiments per channel resolve to the most precise.
+- Config validation: unknown channels, half-specified windows, out-of-range weeks, and non-positive `se_pct` fail at construction.
+
+### Compatibility
+- Fully backward compatible: `experiments` defaults to empty; without experiments, no random draws are consumed and ground truth gains only `experiments: []` / `experiment_calibration: None`.
+
 ## 2.1.0 — 2026-07-31
 
 ### Added

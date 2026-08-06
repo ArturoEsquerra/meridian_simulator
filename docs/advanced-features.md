@@ -138,3 +138,46 @@ For reasoning about combined effects, the pipeline applies, in order:
 7. KPI transformer scaling, ground-truth recording, output assembly
 
 Distractor variables (collinear, endogenous) are generated after step 6 — they observe the finished system but never feed back into it.
+
+
+## Incrementality experiments & prior calibration (v2.2)
+
+Meridian's differentiating feature is calibrating ROI priors with incrementality experiments. The simulator closes the loop by simulating the experiments themselves:
+
+```python
+from meridian_simulator import ExperimentConfig
+
+cfg = SimulationConfig(
+    ...,
+    experiments=[
+        # Full-duration conversion lift on Google
+        ExperimentConfig(name="google_lift", channel="google_performance", se_pct=0.10),
+        # 8-week geo holdout on TV, weeks 40-47
+        ExperimentConfig(name="tv_holdout", channel="tv",
+                         start_week=40, end_week=47, se_pct=0.20),
+        # TRAP: a short-horizon study that misses 30% of true incrementality
+        ExperimentConfig(name="yt_short", channel="youtube",
+                         se_pct=0.08, bias_pct=-0.30),
+    ],
+)
+result = MeridianSimulator(cfg).run()
+```
+
+Each experiment measures the channel's **true window ROI** from the recorded contributions, then reports `point_estimate` and `standard_error` (`ground_truth["experiments"]`). `ground_truth["experiment_calibration"]` is Meridian-ready:
+
+```python
+import tensorflow_probability as tfp
+from meridian.model import prior_distribution, spec
+
+cal = result.ground_truth["experiment_calibration"]
+prior = prior_distribution.PriorDistribution(
+    roi_m=tfp.distributions.LogNormal(
+        cal["roi_mu"].astype("float32"), cal["roi_sigma"].astype("float32"))
+)
+model_spec = spec.ModelSpec(
+    prior=prior,
+    roi_calibration_period=cal["roi_calibration_period"],  # None if all full-duration
+)
+```
+
+Uncalibrated channels keep Meridian's default `LogNormal(0.2, 0.9)`. The `bias_pct` knob turns calibration itself into a judgment test: an analyst who calibrates hard on a biased study pulls the posterior toward the wrong ROI — and the ground truth records exactly how wrong.
