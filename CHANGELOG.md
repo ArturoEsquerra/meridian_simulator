@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.2.2 — 2026-09-09
+
+### Added
+- **Verified Meridian 2.x compatibility matrix.** Meridian 2.0.0 was installed and tested directly (previously the dependency would not resolve locally, so 2.x behaviour was inferred from source):
+
+  | Meridian | Backend | Status |
+  |---|---|---|
+  | 1.x | TensorFlow (only backend) | Works |
+  | 2.x | TensorFlow (`MERIDIAN_BACKEND=tensorflow`) | **Works** — output bit-identical to 1.x |
+  | 2.x | JAX (2.x default) | **Not supported** — Meridian's JAX ops cannot consume TensorFlow tensors |
+
+- `check_meridian_compat()` now **raises a `RuntimeError` with the exact remedy** when it detects Meridian 2.x running on the JAX backend, instead of letting the run fail later with `TypeError: Error interpreting argument ... as an abstract array ... EagerTensor`. Backend detection prefers Meridian's live `get_backend()`, falling back to `MERIDIAN_BACKEND` and then the declared default; it reports `"unknown"` rather than guessing.
+- `docs/meridian-2-compatibility.md` — step-by-step for installing and validating Meridian 2.x alongside the simulator.
+
+### Notes
+- The `google-meridian>=1.6,<2` pin stays: it guarantees a working environment from a plain `pip install`. Meridian 2.x is supported on an opt-in basis by overriding the pin and selecting the TensorFlow backend (see the doc above).
+- Confirmed on a real 2.0.0 install: default backend is JAX, `np_float_dtype` is `float64`, and `knots.get_knot_info().weights` is float64 — the precise origin of the 2.2.1 einsum failure.
+
+## 2.2.1 — 2026-09-09
+
+### Fixed
+- **`InvalidArgumentError: cannot compute Einsum ... expected to be a float tensor but is a double tensor`.**
+  Google released **Meridian 2.0.0 on 2026-09-03**, which changed the default compute backend from TensorFlow to **JAX** (`backend/config.py: _DEFAULT_BACKEND = Backend.JAX`). Under the JAX backend Meridian's float width is `np.float64 if jax.config.jax_enable_x64 else np.float32`, so arrays it builds with `dtype=backend.np_float_dtype` — notably `knots.get_knot_info().weights` — can come back as **float64**. The simulator fed those straight into `tf.einsum` against its own float32 tensors, producing the error above (input #1 is the knot weights). A fresh `pip install google-meridian` in Colab now resolves to 2.0.0, which is why this appeared without any change to the simulator.
+
+### Added
+- `utils.as_float()` — the single conversion point for values originating inside Meridian. Normalises numpy (any precision), TF tensors, JAX arrays, and Python sequences to the simulator's float32. Applied at every Meridian boundary: knot weights, prior samples (`alpha/ec/slope` for media, R&F, and organic), `MediaTransformer` / `CenteringAndScalingTransformer` outputs, and `HillTransformer` / `AdstockTransformer` outputs.
+- `utils.check_meridian_compat()` — reports the installed Meridian version and backend, and warns on majors the simulator has not been validated against. Called automatically at the start of `MeridianSimulator.run()`.
+
+### Changed
+- **Dependency pinned to `google-meridian>=1.6,<2`.** The simulator is TensorFlow-based and is validated against Meridian 1.x only; 2.0's JAX backend is not yet validated end to end. Pinning stops fresh installs from silently adopting an untested major version.
+
+### Compatibility
+- Under Meridian 1.x the casts are identity operations: output is **bit-identical** to 2.2.0 (verified — seed 42 reproduces `search=2.947`, `tv=0.805` exactly). Existing datasets and recorded ground truth still reproduce.
+- If you need Meridian 2.x, set `MERIDIAN_BACKEND=tensorflow` **before** importing `meridian` to select its TensorFlow backend, which fixes Meridian's float width at float32. This path is untested here — verify before relying on it.
+
 ## 2.2.0 — 2026-08-05
 
 ### Added

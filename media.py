@@ -32,6 +32,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 
 from meridian_simulator.config import MediaChannelConfig, RFChannelConfig
+from meridian_simulator.utils import as_float
 
 
 # ---------------------------------------------------------------------------
@@ -41,9 +42,11 @@ from meridian_simulator.config import MediaChannelConfig, RFChannelConfig
 
 def _sample_adstock_hill_params(prior, n_channels: int):
     """Sample alpha, ec, slope from Meridian's default prior or return None."""
-    alpha = prior.alpha_m.sample() if n_channels > 0 else None
-    ec = prior.ec_m.sample() if n_channels > 0 else None
-    slope = prior.slope_m.sample() if n_channels > 0 else None
+    # Meridian's prior samples follow its backend's float width; coerce so the
+    # simulator's float32 graph stays consistent (see utils.as_float).
+    alpha = as_float(prior.alpha_m.sample()) if n_channels > 0 else None
+    ec = as_float(prior.ec_m.sample()) if n_channels > 0 else None
+    slope = as_float(prior.slope_m.sample()) if n_channels > 0 else None
     return alpha, ec, slope
 
 
@@ -70,13 +73,14 @@ def _apply_adstock_hill(
     )
 
     if not is_rf:
-        media_out = hill_tr.forward(adstock_tr.forward(transformed_media))
+        media_out = hill_tr.forward(adstock_tr.forward(as_float(transformed_media)))
     else:
         # RF: hill applied to frequency, adstock to reach × adjusted_frequency
-        adj_freq = hill_tr.forward(freq_gtm)
-        media_out = adstock_tr.forward(transformed_media * adj_freq)
+        adj_freq = hill_tr.forward(as_float(freq_gtm))
+        media_out = adstock_tr.forward(as_float(transformed_media) * as_float(adj_freq))
 
-    return media_out
+    # Meridian's transformers return tensors in its backend's float width.
+    return as_float(media_out)
 
 
 def _solve_beta_m_for_roi(
@@ -246,11 +250,11 @@ def transform_media(
 
     if impression_gtm.shape[-1] > 0:
         imp_tr = meridian_tr.MediaTransformer(media=impression_gtm, population=p_g)
-        result["transformed_ipc_gtm"] = imp_tr.forward(impression_gtm)
+        result["transformed_ipc_gtm"] = as_float(imp_tr.forward(impression_gtm))
 
     if reach_gtm is not None and reach_gtm.shape[-1] > 0:
         reach_tr = meridian_tr.MediaTransformer(media=reach_gtm, population=p_g)
-        result["transformed_rpc_gtm"] = reach_tr.forward(reach_gtm)
+        result["transformed_rpc_gtm"] = as_float(reach_tr.forward(reach_gtm))
 
     return result
 
@@ -310,19 +314,19 @@ def simulate_paid_media(
     if n_m > 0:
         alpha_m = tf.constant(
             [c.alpha for c in media_cfgs], dtype=tf.float32
-        ) if all(c.alpha is not None for c in media_cfgs) else prior.alpha_m.sample()
+        ) if all(c.alpha is not None for c in media_cfgs) else as_float(prior.alpha_m.sample())
 
         ec_m = tf.constant(
             [c.ec for c in media_cfgs], dtype=tf.float32
-        ) if all(c.ec is not None for c in media_cfgs) else prior.ec_m.sample()
+        ) if all(c.ec is not None for c in media_cfgs) else as_float(prior.ec_m.sample())
 
         slope_m = tf.constant(
             [c.slope for c in media_cfgs], dtype=tf.float32
-        ) if all(c.slope is not None for c in media_cfgs) else prior.slope_m.sample()
+        ) if all(c.slope is not None for c in media_cfgs) else as_float(prior.slope_m.sample())
 
         # Fall back to prior for channels where only some params are set
         if any(c.alpha is None for c in media_cfgs):
-            alpha_m_sampled = prior.alpha_m.sample()
+            alpha_m_sampled = as_float(prior.alpha_m.sample())
             fixed_idx = [
                 [i] for i, c in enumerate(media_cfgs) if c.alpha is not None
             ]
@@ -347,15 +351,15 @@ def simulate_paid_media(
     if n_rf > 0:
         alpha_rf = tf.constant(
             [c.alpha for c in rf_cfgs], dtype=tf.float32
-        ) if all(c.alpha is not None for c in rf_cfgs) else prior.alpha_rf.sample()
+        ) if all(c.alpha is not None for c in rf_cfgs) else as_float(prior.alpha_rf.sample())
 
         ec_rf = tf.constant(
             [c.ec for c in rf_cfgs], dtype=tf.float32
-        ) if all(c.ec is not None for c in rf_cfgs) else prior.ec_rf.sample()
+        ) if all(c.ec is not None for c in rf_cfgs) else as_float(prior.ec_rf.sample())
 
         slope_rf = tf.constant(
             [c.slope for c in rf_cfgs], dtype=tf.float32
-        ) if all(c.slope is not None for c in rf_cfgs) else prior.slope_rf.sample()
+        ) if all(c.slope is not None for c in rf_cfgs) else as_float(prior.slope_rf.sample())
 
         max_lag_rf = max((c.max_lag for c in rf_cfgs), default=8)
         rf_transformed = _apply_adstock_hill(

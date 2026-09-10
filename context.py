@@ -16,6 +16,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 
 from meridian_simulator.config import ContextVariableConfig, NonMediaChannelConfig
+from meridian_simulator.utils import as_float
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +112,7 @@ def simulate_context_variables(
     ctx_transformer = meridian_tr.CenteringAndScalingTransformer(
         tensor=context_gtc, population=p_g, population_scaling_id=None
     )
-    transformed_context_gtc = ctx_transformer.forward(context_gtc)
+    transformed_context_gtc = as_float(ctx_transformer.forward(context_gtc))
 
     # --- Coefficients --------------------------------------------------------
     gamma_c_vals = []

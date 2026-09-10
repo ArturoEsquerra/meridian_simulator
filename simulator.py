@@ -39,6 +39,7 @@ from meridian_simulator.output import (
     build_xarray_dataset,
 )
 from meridian_simulator.utils import (
+    check_meridian_compat,
     make_channel_names,
     make_geo_names,
     make_time_labels,
@@ -298,6 +299,7 @@ class MeridianSimulator:
             A :class:`SimulationResult` containing all outputs.
         """
         cfg = self.cfg
+        check_meridian_compat()   # warn early on untested Meridian majors
         tf.random.set_seed(cfg.seed)
         # Use the new-style Generator API (NumPy 2.x compatible).
         # np.random.default_rng is reproducible and does not mutate global state.

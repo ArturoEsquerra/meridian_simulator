@@ -36,7 +36,7 @@ from meridian_simulator.config import (
 )
 
 
-__version__ = "2.2.0"
+__version__ = "2.2.2"
 
 
 def __getattr__(name):

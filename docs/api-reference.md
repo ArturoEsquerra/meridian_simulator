@@ -1,6 +1,9 @@
 # meridian_simulator — API Reference
 
-*Version 2.2.0. Style follows the [Meridian API reference](https://developers.google.com/meridian/reference/api/meridian): every public class, field, and function, with parameters and defaults.*
+*Version 2.2.2. Generated from the source by
+`docs/generate_api_reference.py` — rerun it after any code change.
+Style follows the [Meridian API reference](https://developers.google.com/meridian/reference/api/meridian):
+every public class, field, and function, with parameters and defaults.*
 
 ## Package overview
 
@@ -16,7 +19,8 @@
 | `meridian_simulator.context` | Context (control) variables and non-media channels |
 | `meridian_simulator.output` | DataFrame / xarray output assembly |
 
-All public names are importable from the package root: `from meridian_simulator import SimulationConfig, MeridianSimulator, ...`
+All public names import from the package root:
+`from meridian_simulator import SimulationConfig, MeridianSimulator, ...`
 
 ---
 

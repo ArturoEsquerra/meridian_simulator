@@ -27,6 +27,36 @@ pip install -e meridian_simulator
 
 Requires Python ≥ 3.10 and `google-meridian` (the simulator reuses Meridian's own transformers, priors, and adstock/Hill code so simulated data is consistent with what Meridian expects).
 
+### Meridian version compatibility
+
+**Default: `google-meridian` 1.x**, pinned automatically (`>=1.6,<2`) so a plain install always works.
+
+Meridian **2.0.0** (2026-09-03) changed its default compute backend from TensorFlow to **JAX**. Because this simulator builds TensorFlow tensors, the JAX backend is incompatible — Meridian's JAX ops reject TF tensors. Verified matrix:
+
+| Meridian | Backend | Status |
+|---|---|---|
+| 1.x | TensorFlow (only) | ✅ Works |
+| 2.x | TensorFlow | ✅ Works — output **bit-identical** to 1.x |
+| 2.x | JAX (2.x default) | ❌ Not supported |
+
+Running 2.x on JAX raises a `RuntimeError` naming the fix, rather than failing later with a confusing tensor-type error.
+
+**On Colab**, pin explicitly — a bare `pip install google-meridian` now resolves to 2.x:
+
+```python
+%pip install -q "google-meridian<2"
+%pip install -q git+https://github.com/<you>/meridian_simulator.git
+```
+
+**To use Meridian 2.x**, select its TensorFlow backend in the very first cell, before anything imports `meridian`:
+
+```python
+import os
+os.environ["MERIDIAN_BACKEND"] = "tensorflow"   # must precede `import meridian`
+```
+
+Full instructions: [docs/meridian-2-compatibility.md](docs/meridian-2-compatibility.md).
+
 ## Quickstart
 
 ```python
@@ -154,4 +184,5 @@ Internal analytical tooling. If this simulator informs published MMM research, c
 
 ## API Reference
 
+- [**Walkthrough notebook**](Meridian_Simulator_Walkthrough.ipynb) — guided tour of every feature, simulate → fit → validate in ~2 min
 - [API Reference](docs/api-reference.md) — every class, field, and function, Meridian-style

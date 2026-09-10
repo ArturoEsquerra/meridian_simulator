@@ -11,6 +11,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 
 from meridian_simulator.config import OrganicMediaChannelConfig, OrganicRFChannelConfig
+from meridian_simulator.utils import as_float
 from meridian_simulator.media import (
     simulate_impressions,
     simulate_reach_frequency,
@@ -61,17 +62,17 @@ def simulate_organic_media(
         alpha_om = (
             tf.constant([c.alpha for c in media_cfgs], dtype=tf.float32)
             if all(c.alpha is not None for c in media_cfgs)
-            else prior.alpha_om.sample()
+            else as_float(prior.alpha_om.sample())
         )
         ec_om = (
             tf.constant([c.ec for c in media_cfgs], dtype=tf.float32)
             if all(c.ec is not None for c in media_cfgs)
-            else prior.ec_om.sample()
+            else as_float(prior.ec_om.sample())
         )
         slope_om = (
             tf.constant([c.slope for c in media_cfgs], dtype=tf.float32)
             if all(c.slope is not None for c in media_cfgs)
-            else prior.slope_om.sample()
+            else as_float(prior.slope_om.sample())
         )
         max_lag_om = max((c.max_lag for c in media_cfgs), default=8)
         org_media_transformed = _apply_adstock_hill(
@@ -121,17 +122,17 @@ def simulate_organic_media(
         alpha_orf = (
             tf.constant([c.alpha for c in rf_cfgs], dtype=tf.float32)
             if all(c.alpha is not None for c in rf_cfgs)
-            else prior.alpha_orf.sample()
+            else as_float(prior.alpha_orf.sample())
         )
         ec_orf = (
             tf.constant([c.ec for c in rf_cfgs], dtype=tf.float32)
             if all(c.ec is not None for c in rf_cfgs)
-            else prior.ec_orf.sample()
+            else as_float(prior.ec_orf.sample())
         )
         slope_orf = (
             tf.constant([c.slope for c in rf_cfgs], dtype=tf.float32)
             if all(c.slope is not None for c in rf_cfgs)
-            else prior.slope_orf.sample()
+            else as_float(prior.slope_orf.sample())
         )
         max_lag_orf = max((c.max_lag for c in rf_cfgs), default=8)
         org_rf_transformed = _apply_adstock_hill(

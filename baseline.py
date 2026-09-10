@@ -22,6 +22,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 
 from meridian_simulator.config import BaselineConfig, SeasonalityComponent
+from meridian_simulator.utils import as_float
 
 
 def _build_seasonality(
@@ -63,8 +64,12 @@ def _build_mu_t(
 
     knots_k = tfp.distributions.Normal(0.0, knot_std).sample(n_knots)
     knot_info = meridian_knots.get_knot_info(n_times, n_knots, False)
-    weights = tf.convert_to_tensor(knot_info.weights)  # (n_knots, n_times)
-    mu_t = tf.einsum("k,kt->t", knots_k, weights)
+    # Meridian builds these weights with `dtype=backend.np_float_dtype`, which
+    # is float64 under the JAX backend that Meridian >= 2.0 selects by default
+    # (when jax_enable_x64 is set). Coerce to the simulator's float32 so the
+    # einsum below cannot hit a float/double mismatch.
+    weights = as_float(knot_info.weights)  # (n_knots, n_times)
+    mu_t = tf.einsum("k,kt->t", as_float(knots_k), weights)
     return mu_t
 
 
