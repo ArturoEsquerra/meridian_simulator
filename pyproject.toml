@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meridian-simulator"
+version = "2.2.2"
+description = "Simulate Meridian-compatible Marketing Mix Model datasets with full control over ROI, adstock, saturation, baseline structure, and all channel types."
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+dependencies = [
+    # Pinned to 1.x: Meridian 2.0 (2026-09-03) switched its default backend to
+    # JAX, whose float width can be float64. The simulator is TensorFlow-based
+    # and is validated against 1.x only. See CHANGELOG 2.2.1.
+    "google-meridian>=1.6,<2",
+    "tensorflow>=2.16",
+    "tensorflow-probability>=0.24",
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "xarray>=2024.1",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "jupyter>=1.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["meridian_simulator*"]
